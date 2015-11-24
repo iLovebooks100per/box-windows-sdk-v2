@@ -26,6 +26,12 @@ namespace Box.V2.Converter
                         return new BoxFolder();
                     case Constants.TypeWebLink:
                         return new BoxWebLink();
+                    case Constants.TypeRetentionPolicy:
+                        return new BoxRetentionPolicy();
+                    case Constants.TypeRetentionPolicyAssignment:
+                        return new BoxRetentionPolicyAssignment();
+                    case Constants.TypeFileVersionRetention:
+                        return new BoxFileVersionRetention();
                     case Constants.TypeComment:
                         return new BoxComment();
                     case Constants.TypeFileVersion:
@@ -40,6 +46,8 @@ namespace Box.V2.Converter
                         return new BoxEnterprise();
                     case Constants.TypeCollaboration:
                         return new BoxCollaboration();
+                    case Constants.TypeLock:
+                        return new BoxFileLock();
                 }
             }
             return new BoxEntity();

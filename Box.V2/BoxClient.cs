@@ -24,7 +24,17 @@ namespace Box.V2
         /// Instantiates a BoxClient with the provided config object
         /// </summary>
         /// <param name="boxConfig">The config object to be used</param>
-        public BoxClient(IBoxConfig boxConfig) : this(boxConfig, null) { }
+        public BoxClient(IBoxConfig boxConfig)
+        {
+            Config = boxConfig;
+
+            _handler = new HttpRequestHandler();
+            _converter = new BoxJsonConverter();
+            _service = new BoxService(_handler);
+            Auth = new AuthRepository(Config, _service, _converter, null);
+
+            InitManagers();
+        }
 
         /// <summary>
         /// Instantiates a BoxClient with the provided config object and auth session
@@ -43,6 +53,43 @@ namespace Box.V2
             InitManagers();
         }
 
+        /// <summary>
+        /// Instantiates a BoxClient that uses JWT authentication
+        /// </summary>
+        /// <param name="boxConfig">The config object to be used</param>
+        /// <param name="authRepository">An IAuthRepository that knows how to retrieve new tokens using JWT</param>
+        public BoxClient(IBoxConfig boxConfig, IAuthRepository authRepository)
+        {
+            Config = boxConfig;
+
+            _handler = new HttpRequestHandler();
+            _converter = new BoxJsonConverter();
+            _service = new BoxService(_handler);
+            Auth = authRepository;
+
+            InitManagers();
+        }
+
+        /// <summary>
+        /// Initializes a new BoxClient with the provided config, converter, service and auth objects.
+        /// </summary>
+        /// <param name="boxConfig">The config object to use</param>
+        /// <param name="boxConverter">The box converter object to use</param>
+        /// <param name="requestHandler">The box request handler to use</param>
+        /// <param name="boxService">The box service to use</param>
+        /// <param name="auth">The auth repository object to use</param>
+        public BoxClient(IBoxConfig boxConfig, IBoxConverter boxConverter, IRequestHandler requestHandler, IBoxService boxService, IAuthRepository auth)
+        {
+            Config = boxConfig;
+
+            _handler = requestHandler;
+            _converter = boxConverter;
+            _service = boxService;
+            Auth = auth;
+
+            InitManagers();
+        }
+
         private void InitManagers()
         {
             // Init Resource Managers
@@ -53,6 +100,7 @@ namespace Box.V2
             SearchManager = new BoxSearchManager(Config, _service, _converter, Auth);
             UsersManager = new BoxUsersManager(Config, _service, _converter, Auth);
             GroupsManager = new BoxGroupsManager(Config, _service, _converter, Auth);
+            RetentionPoliciesManager = new BoxRetentionPoliciesManager(Config, _service, _converter, Auth);
 
             // Init Resource Plugins Manager
             ResourcePlugins = new BoxResourcePlugins();
@@ -111,9 +159,14 @@ namespace Box.V2
         public BoxGroupsManager GroupsManager { get; private set; }
 
         /// <summary>
+        /// The manager that represents the retention policies endpoint
+        /// </summary>
+        public BoxRetentionPoliciesManager RetentionPoliciesManager { get; private set; }
+
+        /// <summary>
         /// The Auth repository that holds the auth session
         /// </summary>
-        public AuthRepository Auth { get; set; }
+        public IAuthRepository Auth { get; private set; }
 
         /// <summary>
         /// Allows resource managers to be registered and retrieved as plugins

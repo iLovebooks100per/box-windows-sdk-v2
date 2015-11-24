@@ -3,6 +3,7 @@ using Box.V2.Config;
 using Box.V2.Converter;
 using Box.V2.Extensions;
 using Box.V2.Services;
+using System;
 using System.Globalization;
 using System.Text;
 using System.Threading.Tasks;
@@ -39,8 +40,8 @@ namespace Box.V2.Managers
         protected IBoxRequest AddDefaultHeaders(IBoxRequest request)
         {
             request
-                .Header("User-Agent", _config.UserAgent)
-                .Header("Accept-Encoding", _config.AcceptEncoding.ToString());
+                .Header(Constants.RequestParameters.UserAgent, _config.UserAgent)
+                .Header(Constants.RequestParameters.AcceptEncoding, _config.AcceptEncoding.ToString());
 
             return request;
         }
@@ -62,18 +63,11 @@ namespace Box.V2.Managers
                 await _service.EnqueueAsync<T>(request).ConfigureAwait(false) :
                 await _service.ToResponseAsync<T>(request).ConfigureAwait(false);
 
-            switch (response.Status)
+            if (response.Status == ResponseStatus.Unauthorized)
             {
                 // Refresh the access token if the status is "Unauthorized" (HTTP Status Code 401: Unauthorized)
                 // This will only be attempted once as refresh tokens are single use
-                case ResponseStatus.Unauthorized:
-                    response = await RetryExpiredTokenRequest<T>(request).ConfigureAwait(false);
-                    break;
-                // Continue to retry the request if the status is "Pending" (HTTP Status Code 202: Approved)
-                // this will occur if a preview/thumbnail is not ready yet
-                case ResponseStatus.Pending:
-                    response = await ExecuteRequest<T>(request, queueRequest).ConfigureAwait(false);
-                    break;
+                response = await RetryExpiredTokenRequest<T>(request).ConfigureAwait(false);
             }
 
             return response;
@@ -103,15 +97,19 @@ namespace Box.V2.Managers
                 string.Format(CultureInfo.InvariantCulture, Constants.V2AuthString, auth);
 
             StringBuilder sb = new StringBuilder(authString);
-            
-            // Device ID is required for accounts that have device pinning enabled
-            sb.Append(string.IsNullOrWhiteSpace(_config.DeviceId) ? 
-                string.Empty : 
-                string.Format("&device_id={0}", _config.DeviceId));
-            sb.Append(string.IsNullOrWhiteSpace(_config.DeviceName) ? 
-                string.Empty : 
-                string.Format("&device_name={0}", _config.DeviceName));
 
+            // Appending device_id is required for accounts that have device pinning enabled on V1 auth
+            if (_auth.Session.AuthVersion == AuthVersion.V1)
+            { 
+                sb.Append(string.IsNullOrWhiteSpace(_config.DeviceId) ? 
+                    string.Empty : 
+                    string.Format("&device_id={0}", _config.DeviceId));
+                sb.Append(string.IsNullOrWhiteSpace(_config.DeviceName) ? 
+                    string.Empty : 
+                    string.Format("&device_name={0}", _config.DeviceName));
+            }
+
+            request.Authorization = auth;
             request.Header(Constants.AuthHeaderKey, sb.ToString());
         }
 

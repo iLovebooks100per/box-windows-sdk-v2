@@ -1,4 +1,6 @@
-﻿using Box.V2.Managers;
+﻿using Box.V2.Config;
+using Box.V2.Exceptions;
+using Box.V2.Managers;
 using Box.V2.Models;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
@@ -172,6 +174,83 @@ namespace Box.V2.Test
             Assert.AreEqual(f.ItemCollection.Entries.Count, 0);
             //Assert.AreEqual(f.Offset, 0); // Need to add property
             //Assert.AreEqual(f.Limit, 100); // Need to add property
+        }
+
+        [TestMethod]
+        public async Task CreateFolder_ValidResponse_NameConflict()
+        {
+            _handler.Setup(h => h.ExecuteAsync<BoxFolder>(It.IsAny<IBoxRequest>()))
+                .Returns(() => Task.FromResult<IBoxResponse<BoxFolder>>(new BoxResponse<BoxFolder>()
+                {
+                    StatusCode = System.Net.HttpStatusCode.Conflict,
+                    Status = ResponseStatus.Error,
+                    ContentString = "{\"type\": \"error\", \"status\": 409, \"code\": \"item_name_in_use\", \"context_info\": {\"conflicts\":[{ \"type\": \"folder\", \"id\": \"11446498\", \"sequence_id\": \"1\", \"etag\": \"1\", \"name\": \"Pictures\", \"created_at\": \"2012-12-12T10:53:43-08:00\", \"modified_at\": \"2012-12-12T11:15:04-08:00\", \"description\": \"Some pictures I took\", \"size\": 629644, \"path_collection\": { \"total_count\": 1, \"entries\": [ { \"type\": \"folder\", \"id\": \"0\", \"sequence_id\": null, \"etag\": null, \"name\": \"All Files\" } ] }, \"created_by\": { \"type\": \"user\", \"id\": \"17738362\", \"name\": \"sean rose\", \"login\": \"sean@box.com\" }, \"modified_by\": { \"type\": \"user\", \"id\": \"17738362\", \"name\": \"sean rose\", \"login\": \"sean@box.com\" }, \"owned_by\": { \"type\": \"user\", \"id\": \"17738362\", \"name\": \"sean rose\", \"login\": \"sean@box.com\" }, \"shared_link\": { \"url\": \"https://www.box.com/s/vspke7y05sb214wjokpk\", \"download_url\": \"https://www.box.com/shared/static/vspke7y05sb214wjokpk\", \"vanity_url\": null, \"is_password_enabled\": false, \"unshared_at\": null, \"download_count\": 0, \"preview_count\": 0, \"access\": \"open\", \"permissions\": { \"can_download\": true, \"can_preview\": true } }, \"folder_upload_email\": { \"access\": \"open\", \"email\": \"upload.Picture.k13sdz1@u.box.com\" }, \"parent\": { \"type\": \"folder\", \"id\": \"0\", \"sequence_id\": null, \"etag\": null, \"name\": \"All Files\" }, \"item_status\": \"active\", \"item_collection\": { \"total_count\": 0, \"entries\": [], \"offset\": 0, \"limit\": 100 } }]},\"help_url\":\"http:\\/\\/developers.box.com\\/docs\\/#errors\",\"message\":\"Item with the same name already exists\",\"request_id\":\"197141966053a1ce8c40d64\"}"
+                }));
+
+            var folderReq = new BoxFolderRequest()
+            {
+                Name = "test",
+                Parent = new BoxRequestEntity() { Id = "0" }
+            };
+
+            try 
+            {
+                BoxFolder f = await _foldersManager.CreateAsync(folderReq);
+                throw new BoxException("Invalid error type returned");
+            }
+            catch (BoxConflictException<BoxFolder> ex)
+            {
+                Assert.AreEqual(Constants.ErrorCodes.Conflict, ex.Error.Code);
+                Assert.IsTrue(ex.Error is BoxConflictError<BoxFolder>);
+                BoxFolder f = ex.ConflictingItems.First();
+                Assert.AreEqual(f.Type, "folder");
+                Assert.AreEqual(f.Id, "11446498");
+                Assert.AreEqual(f.SequenceId, "1");
+                Assert.AreEqual(f.ETag, "1");
+                Assert.AreEqual(f.Name, "Pictures");
+                Assert.AreEqual(f.CreatedAt, DateTime.Parse("2012-12-12T10:53:43-08:00"));
+                Assert.AreEqual(f.ModifiedAt, DateTime.Parse("2012-12-12T11:15:04-08:00"));
+                Assert.AreEqual(f.Description, "Some pictures I took");
+                Assert.AreEqual(f.Size, 629644);
+                Assert.AreEqual(f.PathCollection.TotalCount, 1);
+                Assert.AreEqual(f.PathCollection.Entries.Count, 1);
+                Assert.AreEqual(f.PathCollection.Entries[0].Id, "0");
+                Assert.IsNull(f.PathCollection.Entries[0].SequenceId);
+                Assert.IsNull(f.PathCollection.Entries[0].ETag);
+                Assert.AreEqual(f.PathCollection.Entries[0].Name, "All Files");
+                Assert.AreEqual(f.CreatedBy.Type, "user");
+                Assert.AreEqual(f.CreatedBy.Id, "17738362");
+                Assert.AreEqual(f.CreatedBy.Name, "sean rose");
+                Assert.AreEqual(f.CreatedBy.Login, "sean@box.com");
+                Assert.AreEqual(f.ModifiedBy.Type, "user");
+                Assert.AreEqual(f.ModifiedBy.Id, "17738362");
+                Assert.AreEqual(f.ModifiedBy.Name, "sean rose");
+                Assert.AreEqual(f.ModifiedBy.Login, "sean@box.com");
+                Assert.AreEqual(f.OwnedBy.Type, "user");
+                Assert.AreEqual(f.OwnedBy.Id, "17738362");
+                Assert.AreEqual(f.OwnedBy.Name, "sean rose");
+                Assert.AreEqual(f.OwnedBy.Login, "sean@box.com");
+                Assert.AreEqual(f.SharedLink.Url, "https://www.box.com/s/vspke7y05sb214wjokpk");
+                Assert.AreEqual(f.SharedLink.DownloadUrl, "https://www.box.com/shared/static/vspke7y05sb214wjokpk");
+                Assert.AreEqual(f.SharedLink.VanityUrl, null);
+                Assert.IsFalse(f.SharedLink.IsPasswordEnabled);
+                Assert.IsNull(f.SharedLink.UnsharedAt);
+                Assert.AreEqual(f.SharedLink.DownloadCount, 0);
+                Assert.AreEqual(f.SharedLink.PreviewCount, 0);
+                Assert.AreEqual(f.SharedLink.Access, BoxSharedLinkAccessType.open);
+                Assert.IsTrue(f.SharedLink.Permissions.CanDownload);
+                Assert.IsTrue(f.SharedLink.Permissions.CanPreview);
+                Assert.AreEqual(f.FolderUploadEmail.Acesss, "open");
+                Assert.AreEqual(f.FolderUploadEmail.Address, "upload.Picture.k13sdz1@u.box.com");
+                Assert.AreEqual(f.Parent.Type, "folder");
+                Assert.AreEqual(f.Parent.Id, "0");
+                Assert.IsNull(f.Parent.SequenceId);
+                Assert.IsNull(f.Parent.ETag);
+                Assert.AreEqual(f.Parent.Name, "All Files");
+                Assert.AreEqual(f.ItemStatus, "active");
+                Assert.AreEqual(f.ItemCollection.TotalCount, 0);
+                Assert.AreEqual(f.ItemCollection.Entries.Count, 0);
+            }
         }
 
         [TestMethod]
@@ -352,8 +431,43 @@ namespace Box.V2.Test
             Assert.AreEqual("14176246", collab.Id);
             Assert.AreEqual("David Lee", collab.CreatedBy.Name);
             Assert.AreEqual("david@box.com", collab.CreatedBy.Login);
-            Assert.AreEqual("Simon Tan", collab.AccessibleBy.Name);
-            Assert.AreEqual("simon@box.net", collab.AccessibleBy.Login);
+            var user = collab.AccessibleBy as BoxUser;
+            Assert.AreEqual("Simon Tan", user.Name);
+            Assert.AreEqual("simon@box.net", user.Login);
+        }
+
+        [TestMethod]
+        public async Task GetFolderCollaborators_ValidResponseWithGroups_ValidCollaborators()
+        {
+            /*** Arrange ***/
+            _handler.Setup(h => h.ExecuteAsync<BoxCollection<BoxCollaboration>>(It.IsAny<IBoxRequest>()))
+                .Returns(() => Task.FromResult<IBoxResponse<BoxCollection<BoxCollaboration>>>(new BoxResponse<BoxCollection<BoxCollaboration>>()
+                {
+                    Status = ResponseStatus.Success,
+                    ContentString = "{ \"total_count\": 2, \"entries\": [ { \"type\": \"collaboration\", \"id\": \"14176246\", \"created_by\": { \"type\": \"user\", \"id\": \"4276790\", \"name\": \"David Lee\", \"login\": \"david@box.com\" }, \"created_at\": \"2011-11-29T12:56:35-08:00\", \"modified_at\": \"2012-09-11T15:12:32-07:00\", \"expires_at\": null, \"status\": \"accepted\", \"accessible_by\": { \"type\": \"user\", \"id\": \"755492\", \"name\": \"Simon Tan\", \"login\": \"simon@box.net\" }, \"role\": \"editor\", \"acknowledged_at\": \"2011-11-29T12:59:40-08:00\", \"item\": null }, {\"type\": \"collaboration\",\"id\": \"88140750\",\"created_by\": null,\"created_at\": \"2014-12-10T18:58:47-08:00\",\"modified_at\": \"2014-12-10T18:58:47-08:00\",\"expires_at\": null,\"status\": \"accepted\",\"accessible_by\": {\"type\": \"group\",\"id\": \"293514\",\"name\": \"Test Group\"},\"role\": \"editor\",\"acknowledged_at\": \"2014-12-10T18:58:47-08:00\",\"item\": {\"type\": \"folder\",\"id\": \"1055358427\",\"sequence_id\": \"0\",\"etag\": \"0\",\"name\": \"Work\"}} ] }"
+                }));
+
+            /*** Act ***/
+            BoxCollection<BoxCollaboration> c = await _foldersManager.GetCollaborationsAsync("fakeId");
+            var collabs = c.Entries;
+            var collab1 = collabs[0];
+            var collab2 = collabs[1];
+
+            /*** Assert ***/
+            Assert.AreEqual(2, c.TotalCount);
+            Assert.AreEqual("collaboration", collab1.Type);
+            Assert.AreEqual("14176246", collab1.Id);
+            Assert.AreEqual("David Lee", collab1.CreatedBy.Name);
+            Assert.AreEqual("david@box.com", collab1.CreatedBy.Login);
+            var user = collab1.AccessibleBy as BoxUser;
+            Assert.AreEqual("Simon Tan", user.Name);
+            Assert.AreEqual("simon@box.net", user.Login);
+
+            Assert.AreEqual("collaboration", collab2.Type);
+            Assert.AreEqual("88140750", collab2.Id);
+            var group = collab2.AccessibleBy as BoxGroup;
+            Assert.AreEqual("293514", group.Id);
+            Assert.AreEqual("Test Group", group.Name);
         }
 
         [TestMethod]

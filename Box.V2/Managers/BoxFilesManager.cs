@@ -49,12 +49,14 @@ namespace Box.V2.Managers
         /// Returns the stream of the requested file
         /// </summary>
         /// <param name="id">Id of the file to download</param>
+        /// <param name="versionId"></param>
+        /// <param name="timeout"></param>
         /// <returns>MemoryStream of the requested file</returns>
-        public async Task<Stream> DownloadStreamAsync(string id, string versionId = null)
+        public async Task<Stream> DownloadStreamAsync(string id, string versionId = null, TimeSpan? timeout = null)
         {
             id.ThrowIfNullOrWhiteSpace("id");
 
-            BoxRequest request = new BoxRequest(_config.FilesEndpointUri, string.Format(Constants.ContentPathString, id))
+            BoxRequest request = new BoxRequest(_config.FilesEndpointUri, string.Format(Constants.ContentPathString, id)) { Timeout = timeout }
                 .Param("version", versionId);
 
             IBoxResponse<Stream> response = await ToResponseAsync<Stream>(request).ConfigureAwait(false);
@@ -63,13 +65,16 @@ namespace Box.V2.Managers
         }
 
         /// <summary>
-        /// Uploads a provided file to the target parent folder
-        /// If the file already exists, an error will be thrown
+        /// Uploads a provided file to the target parent folder 
+        /// If the file already exists, an error will be thrown.
+        /// A proper timeout should be provided for large uploads
         /// </summary>
         /// <param name="fileRequest"></param>
         /// <param name="stream"></param>
+        /// <param name="fields"></param>
+        /// <param name="timeout"></param>
         /// <returns></returns>
-        public async Task<BoxFile> UploadAsync(BoxFileRequest fileRequest, Stream stream, List<string> fields = null)
+        public async Task<BoxFile> UploadAsync(BoxFileRequest fileRequest, Stream stream, List<string> fields = null, TimeSpan? timeout = null)
         {
             stream.ThrowIfNull("stream");
             fileRequest.ThrowIfNull("fileRequest")
@@ -77,7 +82,7 @@ namespace Box.V2.Managers
             fileRequest.Parent.ThrowIfNull("fileRequest.Parent")
                 .Id.ThrowIfNullOrWhiteSpace("fileRequest.Parent.Id");
 
-            BoxMultiPartRequest request = new BoxMultiPartRequest(_config.FilesUploadEndpointUri)
+            BoxMultiPartRequest request = new BoxMultiPartRequest(_config.FilesUploadEndpointUri) { Timeout = timeout }
                 .Param(ParamFields, fields)
                 .FormPart(new BoxStringFormPart()
                 {
@@ -101,17 +106,19 @@ namespace Box.V2.Managers
         /// This method is used to upload a new version of an existing file in a user’s account. Similar to regular file uploads, 
         /// these are performed as multipart form uploads An optional If-Match header can be included to ensure that client only 
         /// overwrites the file if it knows about the latest version. The filename on Box will remain the same as the previous version.
+        /// A proper timeout should be provided for large uploads
         /// </summary>
         /// <param name="fileName"></param>
         /// <param name="stream"></param>
         /// <param name="etag"></param>
+        /// <param name="timeout"></param>
         /// <returns></returns>
-        public async Task<BoxFile> UploadNewVersionAsync(string fileName, string fileId, Stream stream, string etag = null, List<string> fields = null)
+        public async Task<BoxFile> UploadNewVersionAsync(string fileName, string fileId, Stream stream, string etag = null, List<string> fields = null, TimeSpan? timeout = null)
         {
             stream.ThrowIfNull("stream");
             fileName.ThrowIfNullOrWhiteSpace("fileName");
 
-            BoxMultiPartRequest request = new BoxMultiPartRequest(new Uri(string.Format(Constants.FilesNewVersionEndpointString, fileId)))
+            BoxMultiPartRequest request = new BoxMultiPartRequest(new Uri(string.Format(Constants.FilesNewVersionEndpointString, fileId))) { Timeout = timeout }
                 .Header("If-Match", etag)
                 .Param(ParamFields, fields)
                 .FormPart(new BoxFileFormPart()
@@ -132,7 +139,8 @@ namespace Box.V2.Managers
         /// <remarks>Versions are only tracked for Box users with premium accounts.</remarks>
         /// </summary>
         /// <param name="id"></param>
-        /// <returns></returns>
+        /// <returns>A collection of versions other than the main version of the file. If a file has no other versions, an empty collection will be returned.
+        /// Note that if a file has a total of three versions, only the first two version will be returned.</returns>
         public async Task<BoxCollection<BoxFileVersion>> ViewVersionsAsync(string id, List<string> fields = null)
         {
             id.ThrowIfNullOrWhiteSpace("id");
@@ -220,13 +228,30 @@ namespace Box.V2.Managers
         public async Task<BoxFile> CreateSharedLinkAsync(string id, BoxSharedLinkRequest sharedLinkRequest, List<string> fields = null)
         {
             id.ThrowIfNullOrWhiteSpace("id");
-            if (!sharedLinkRequest.ThrowIfNull("sharedLinkRequest").Access.HasValue)
-                throw new ArgumentNullException("sharedLink.Access");
+            sharedLinkRequest.ThrowIfNull("sharedLinkRequest");
 
             BoxRequest request = new BoxRequest(_config.FilesEndpointUri, id)
                 .Method(RequestMethod.Put)
                 .Param(ParamFields, fields)
                 .Payload(_converter.Serialize(new BoxItemRequest() { SharedLink = sharedLinkRequest }));
+
+            IBoxResponse<BoxFile> response = await ToResponseAsync<BoxFile>(request).ConfigureAwait(false);
+
+            return response.ResponseObject;
+        }
+
+        /// <summary>
+        /// Used to delete the shared link for this particular file.
+        /// </summary>
+        /// <param name="id"></param>
+        /// <returns></returns>
+        public async Task<BoxFile> DeleteSharedLinkAsync(string id)
+        {
+            id.ThrowIfNullOrWhiteSpace("id");
+            
+            BoxRequest request = new BoxRequest(_config.FilesEndpointUri, id)
+                .Method(RequestMethod.Put)
+                .Payload(_converter.Serialize(new BoxDeleteSharedLinkRequest()));
 
             IBoxResponse<BoxFile> response = await ToResponseAsync<BoxFile>(request).ConfigureAwait(false);
 
@@ -260,9 +285,11 @@ namespace Box.V2.Managers
         /// <param name="minWidth"></param>
         /// <param name="maxHeight"></param>
         /// <param name="maxWidth"></param>
+        /// <param name="handleRetry">specifies whether the method handles retries. If true, then the method would retry the call if the HTTP response is 'Accepted'. The delay for the retry is determined 
+        /// by the RetryAfter header, or if that header is not set, by the constant DefaultRetryDelay</param>
         /// <param name="throttle">Whether the requests will be throttled. Recommended to be left true to prevent spamming the server</param>
         /// <returns></returns>
-        public async Task<Stream> GetThumbnailAsync(string id, int? minHeight = null, int? minWidth = null, int? maxHeight = null, int? maxWidth = null, bool throttle = true)
+        public async Task<Stream> GetThumbnailAsync(string id, int? minHeight = null, int? minWidth = null, int? maxHeight = null, int? maxWidth = null, bool throttle = true, bool handleRetry = true)
         {
             id.ThrowIfNullOrWhiteSpace("id");
 
@@ -274,7 +301,25 @@ namespace Box.V2.Managers
 
             IBoxResponse<Stream> response = await ToResponseAsync<Stream>(request, throttle).ConfigureAwait(false);
 
+            while (response.StatusCode == HttpStatusCode.Accepted && handleRetry)
+            {
+                await TaskEx.Delay(GetTimeDelay(response.Headers));
+                response = await ToResponseAsync<Stream>(request, throttle).ConfigureAwait(false);
+            }
+
             return response.ResponseObject;
+        }
+
+        /// <summary>
+        /// Gets a preview link (URI) for a file that is valid for 60 seconds
+        /// </summary>
+        /// <param name="id">Id of the file</param>
+        /// <returns></returns>
+        public async Task<Uri> GetPreviewLinkAsync(string id)
+        {
+            var fields = new List<string>() { "expiring_embed_link" };
+            var file = await GetInformationAsync(id, fields);
+            return file.ExpiringEmbedLink.Url;
         }
 
         /// <summary>
@@ -282,10 +327,11 @@ namespace Box.V2.Managers
         /// </summary>
         /// <param name="id"></param>
         /// <param name="page"></param>
+        /// /// <param name="handleRetry"></param>
         /// <returns>A PNG of the preview</returns>
-        public async Task<Stream> GetPreviewAsync(string id, int page)
+        public async Task<Stream> GetPreviewAsync(string id, int page, bool handleRetry = true)
         {
-            return (await GetPreviewResponseAsync(id, page)).ResponseObject;
+            return (await GetPreviewResponseAsync(id, page, handleRetry: handleRetry)).ResponseObject;
         }
 
         /// <summary>
@@ -293,10 +339,12 @@ namespace Box.V2.Managers
         /// </summary>
         /// <param name="id">id of the file to return</param>
         /// <param name="page">page number of the file</param>
+        /// <param name="handleRetry">specifies whether the method handles retries. If true, then the method would retry the call if the HTTP response is 'Accepted'. The delay for the retry is determined 
+        /// by the RetryAfter header, or if that header is not set, by the constant DefaultRetryDelay</param>
         /// <returns>BoxFilePreview that contains the stream, current page number and total number of pages in the file.</returns>
-        public async Task<BoxFilePreview> GetFilePreviewAsync(string id, int page, int? maxWidth = null, int? minWidth = null, int? maxHeight = null, int? minHeight = null)
+        public async Task<BoxFilePreview> GetFilePreviewAsync(string id, int page, int? maxWidth = null, int? minWidth = null, int? maxHeight = null, int? minHeight = null, bool handleRetry = true)
         {  
-            IBoxResponse<Stream> response = await GetPreviewResponseAsync(id, page, maxWidth, minWidth, maxHeight, minHeight);
+            IBoxResponse<Stream> response = await GetPreviewResponseAsync(id, page, maxWidth, minWidth, maxHeight, minHeight, handleRetry);
 
             BoxFilePreview filePreview = new BoxFilePreview();
             filePreview.CurrentPage = page;
@@ -307,11 +355,11 @@ namespace Box.V2.Managers
                 filePreview.PreviewStream = response.ResponseObject ;
                 filePreview.TotalPages = response.BuildPagesCount();
             }
-
+           
             return filePreview;
         }
 
-        private async Task<IBoxResponse<Stream>> GetPreviewResponseAsync(string id, int page, int? maxWidth = null, int? minWidth = null, int? maxHeight = null, int? minHeight = null)
+        private async Task<IBoxResponse<Stream>> GetPreviewResponseAsync(string id, int page, int? maxWidth = null, int? minWidth = null, int? maxHeight = null, int? minHeight = null, bool handleRetry = true)
         {
             id.ThrowIfNullOrWhiteSpace("id");
 
@@ -321,8 +369,28 @@ namespace Box.V2.Managers
 				.Param("max_height", maxHeight.ToString())
 				.Param("min_width", minWidth.ToString())
 				.Param("min_height", minHeight.ToString());
+            
+            var response = await ToResponseAsync<Stream>(request).ConfigureAwait(false);
 
-            return await ToResponseAsync<Stream>(request).ConfigureAwait(false);
+            while (response.StatusCode == HttpStatusCode.Accepted && handleRetry)
+            {
+                await TaskEx.Delay(GetTimeDelay(response.Headers));
+                response = await ToResponseAsync<Stream>(request).ConfigureAwait(false);
+            }
+
+            return response;
+        }
+
+        /// <summary>
+        /// Return the time to wait until retrying the call. If no RetryAfter value is specified in the header, use default value;
+        /// </summary>
+        private int GetTimeDelay(HttpResponseHeaders headers)
+        {
+            int timeToWait;
+            if (headers != null && headers.RetryAfter != null && int.TryParse(headers.RetryAfter.ToString(), out timeToWait))
+                return timeToWait * 1000;
+
+            return Constants.DefaultRetryDelay;
         }
 
         /// <summary>
@@ -375,6 +443,59 @@ namespace Box.V2.Managers
 
             BoxRequest request = new BoxRequest(_config.FilesEndpointUri, string.Format(Constants.TrashPathString, id))
                 .Method(RequestMethod.Delete);
+
+            IBoxResponse<BoxFile> response = await ToResponseAsync<BoxFile>(request).ConfigureAwait(false);
+
+            return response.Status == ResponseStatus.Success;
+        }
+
+        /// <summary>
+        /// Gets a lock file object representation of the provided file Id
+        /// </summary>
+        /// <param name="id">Id of file information to retrieve</param>
+        /// <returns></returns>
+        public async Task<BoxFileLock> GetLockAsync(string id)
+        {
+            id.ThrowIfNullOrWhiteSpace("id");
+
+            BoxRequest request = new BoxRequest(_config.FilesEndpointUri, id)
+                .Param(ParamFields, BoxFile.FieldLock);
+
+            IBoxResponse<BoxFile> response = await ToResponseAsync<BoxFile>(request).ConfigureAwait(false);
+
+            return response.ResponseObject.Lock;
+        }
+
+        /// <summary>
+        /// Used to update the lock information on the file
+        /// </summary>
+        /// <param name="fileRequest"></param>
+        /// <returns></returns>
+        public async Task<BoxFileLock> UpdateLockAsync(BoxFileLockRequest lockFileRequest, string Id)
+        {
+            BoxRequest request = new BoxRequest(_config.FilesEndpointUri, Id)
+                .Method(RequestMethod.Put)
+                .Param(ParamFields, "lock");
+
+            request.Payload = _converter.Serialize(lockFileRequest);
+
+            IBoxResponse<BoxFile> response = await ToResponseAsync<BoxFile>(request).ConfigureAwait(false);
+
+            return response.ResponseObject.Lock;
+        }
+
+        /// <summary>
+        /// Remove a lock
+        /// </summary>
+        /// <param name="id"></param>
+        /// <returns></returns>
+        public async Task<bool> UnLock(string id)
+        {
+            id.ThrowIfNullOrWhiteSpace("id");
+
+            BoxRequest request = new BoxRequest(_config.FilesEndpointUri, id)
+                .Method(RequestMethod.Put)
+                .Payload("{\"lock\":null}");
 
             IBoxResponse<BoxFile> response = await ToResponseAsync<BoxFile>(request).ConfigureAwait(false);
 
